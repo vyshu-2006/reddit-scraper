@@ -1,7 +1,24 @@
+/* eslint-disable no-param-reassign */
 import { setTimeout } from 'node:timers/promises';
 
 import { Actor, log } from 'apify';
 import { gotScraping } from 'crawlee';
+
+async function parallelLimit(tasks, limit) {
+    const results = [];
+    const executing = new Set();
+    for (const task of tasks) {
+        const p = Promise.resolve().then(() => task());
+        results.push(p);
+        executing.add(p);
+        const clean = () => executing.delete(p);
+        p.then(clean, clean);
+        if (executing.size >= limit) {
+            await Promise.race(executing);
+        }
+    }
+    return Promise.all(results);
+}
 
 await Actor.init();
 
@@ -67,7 +84,7 @@ try {
         author: p.author,
         upvotes: p.score,
         commentCount: p.num_comments,
-        url: `https://reddit.com${  p.permalink}`,
+        url: `https://reddit.com${p.permalink}`,
         text: p.selftext || '',
         subreddit: p.subreddit,
         created: new Date(p.created_utc * 1000).toISOString(),
@@ -77,7 +94,8 @@ try {
 
     if (scrapeComments) {
         log.info('Extracting top comments for each post...');
-        for (const post of posts) {
+
+        const scrapePostComments = async (post) => {
             try {
                 const commentsUrl = `${post.url.replace(/\/$/, '')}.json?limit=10`;
                 log.info(`Fetching comments for: ${post.title}`);
@@ -105,13 +123,18 @@ try {
                     post.comments = [];
                 }
 
-                // Be gentle with the API
-                await setTimeout(500);
+                // Add a small delay only if not using proxy to prevent rate-limiting
+                if (!proxyUrl) {
+                    await setTimeout(250);
+                }
             } catch (err) {
                 log.warning(`Error extracting comments for ${post.title}: ${err.message}`);
                 post.comments = [];
             }
-        }
+        };
+
+        const tasks = posts.map((post) => () => scrapePostComments(post));
+        await parallelLimit(tasks, 10);
     }
 
     await Actor.pushData(posts);
