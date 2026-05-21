@@ -32,7 +32,7 @@
         "proxyConfiguration": {
             "title": "Proxy Configuration",
             "type": "object",
-            "description": "Select proxies to be used by your scraper.",
+            "description": "Select proxies. NOTE: Reddit blocks datacenter IPs; using Residential proxies (select Residential proxies in group settings) is highly recommended for cloud execution.",
             "editor": "proxy",
             "default": { "useApifyProxy": true }
         }

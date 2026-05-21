@@ -44,31 +44,10 @@ try {
 
     // Proxy setup
     const proxyConfiguration = await Actor.createProxyConfiguration(proxyInput);
-    const proxyUrl = proxyConfiguration ? await proxyConfiguration.newUrl() : undefined;
+    let proxyUrl = proxyConfiguration ? await proxyConfiguration.newUrl() : undefined;
 
     if (proxyUrl) {
         log.info('Using Apify proxy configuration.');
-    }
-
-    // Warm up session cookies by fetching the main subreddit page first to bypass 403 Forbidden checks
-    let cookieHeader = '';
-    try {
-        const mainUrl = `https://www.reddit.com/r/${subreddit}`;
-        log.info(`Warming up session cookies from ${mainUrl}...`);
-        const warmUpRes = await gotScraping({
-            url: mainUrl,
-            proxyUrl,
-            throwHttpErrors: false,
-        });
-        if (warmUpRes.statusCode === 200) {
-            const cookies = warmUpRes.headers['set-cookie'] || [];
-            cookieHeader = cookies.map((c) => c.split(';')[0]).join('; ');
-            log.info(`Session warmed up successfully. Acquired ${cookies.length} cookies.`);
-        } else {
-            log.warning(`Session warm up returned status ${warmUpRes.statusCode}. Proceeding without cookies.`);
-        }
-    } catch (err) {
-        log.warning(`Failed to warm up session cookies: ${err.message}. Proceeding without cookies.`);
     }
 
     let url;
@@ -81,19 +60,79 @@ try {
         url = `https://www.reddit.com/r/${subreddit}/hot.json?limit=${maxPosts}`;
     }
 
-    const res = await gotScraping({
-        url,
-        proxyUrl,
-        headers: cookieHeader ? { cookie: cookieHeader } : {},
-        responseType: 'json',
-        throwHttpErrors: false,
-    });
+    // Attempt request with retry and proxy rotation logic
+    let res;
+    let cookieHeader = '';
+    const maxRetries = 5;
 
-    if (res.statusCode !== 200) {
-        log.error(`Reddit API responded with ${res.statusCode}`);
-        const text = typeof res.body === 'string' ? res.body : JSON.stringify(res.body);
-        log.debug(text);
-        throw new Error(`HTTP error: ${res.statusCode}`);
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+            // Retrieve a fresh proxy URL on each attempt (if configured)
+            proxyUrl = proxyConfiguration ? await proxyConfiguration.newUrl() : undefined;
+            if (proxyUrl && attempt > 1) {
+                log.info(`Attempt ${attempt}: Rotated to a new proxy IP.`);
+            }
+
+            // 1. Session cookie warm-up
+            cookieHeader = '';
+            const mainUrl = `https://www.reddit.com/r/${subreddit}`;
+            log.info(`Warming up session cookies from ${mainUrl} (Attempt ${attempt}/${maxRetries})...`);
+            const warmUpRes = await gotScraping({
+                url: mainUrl,
+                proxyUrl,
+                throwHttpErrors: false,
+                timeout: { request: 10000 },
+            });
+
+            if (warmUpRes.statusCode !== 200) {
+                log.warning(`Session warm up returned status ${warmUpRes.statusCode} on attempt ${attempt}.`);
+                if (attempt < maxRetries) {
+                    await setTimeout(1500);
+                    continue;
+                }
+            } else {
+                const cookies = warmUpRes.headers['set-cookie'] || [];
+                cookieHeader = cookies.map((c) => c.split(';')[0]).join('; ');
+                log.info(`Session warmed up successfully. Acquired ${cookies.length} cookies.`);
+            }
+
+            // 2. Fetch posts
+            res = await gotScraping({
+                url,
+                proxyUrl,
+                headers: cookieHeader ? { cookie: cookieHeader } : {},
+                responseType: 'json',
+                throwHttpErrors: false,
+                timeout: { request: 10000 },
+            });
+
+            if (res.statusCode === 200) {
+                break; // Successful request
+            } else {
+                log.warning(`Reddit API responded with ${res.statusCode} on attempt ${attempt}.`);
+                if (attempt < maxRetries) {
+                    await setTimeout(1500);
+                    continue;
+                }
+            }
+        } catch (err) {
+            log.warning(`Attempt ${attempt}/${maxRetries} failed: ${err.message}`);
+            if (attempt < maxRetries) {
+                await setTimeout(1500);
+                continue;
+            }
+            throw err;
+        }
+    }
+
+    if (!res || res.statusCode !== 200) {
+        const status = res ? res.statusCode : 'no response';
+        log.error(`Reddit API failed after ${maxRetries} attempts with status ${status}`);
+        if (res && res.body) {
+            const text = typeof res.body === 'string' ? res.body : JSON.stringify(res.body);
+            log.debug(text);
+        }
+        throw new Error(`HTTP error: ${status}`);
     }
 
     const json = typeof res.body === 'string' ? JSON.parse(res.body) : res.body;
@@ -118,42 +157,47 @@ try {
         log.info('Extracting top comments for each post...');
 
         const scrapePostComments = async (post) => {
-            try {
-                const commentsUrl = `${post.url.replace(/\/$/, '')}.json?limit=10`;
-                log.info(`Fetching comments for: ${post.title}`);
-                const cRes = await gotScraping({
-                    url: commentsUrl,
-                    proxyUrl,
-                    headers: cookieHeader ? { cookie: cookieHeader } : {},
-                    responseType: 'json',
-                    throwHttpErrors: false,
-                });
+            const maxCommentRetries = 3;
+            for (let attempt = 1; attempt <= maxCommentRetries; attempt++) {
+                try {
+                    const currentProxyUrl = proxyConfiguration ? await proxyConfiguration.newUrl() : undefined;
+                    const commentsUrl = `${post.url.replace(/\/$/, '')}.json?limit=10`;
+                    log.info(`Fetching comments for: ${post.title} (Attempt ${attempt}/${maxCommentRetries})`);
+                    const cRes = await gotScraping({
+                        url: commentsUrl,
+                        proxyUrl: currentProxyUrl,
+                        headers: cookieHeader ? { cookie: cookieHeader } : {},
+                        responseType: 'json',
+                        throwHttpErrors: false,
+                        timeout: { request: 8000 },
+                    });
 
-                if (cRes.statusCode === 200) {
-                    const cJson = typeof cRes.body === 'string' ? JSON.parse(cRes.body) : cRes.body;
-                    const commentsData = cJson[1]?.data?.children || [];
+                    if (cRes.statusCode === 200) {
+                        const cJson = typeof cRes.body === 'string' ? JSON.parse(cRes.body) : cRes.body;
+                        const commentsData = cJson[1]?.data?.children || [];
 
-                    post.comments = commentsData
-                        .filter((c) => c.kind === 't1' && c.data && c.data.body)
-                        .map((c) => ({
-                            author: c.data.author,
-                            upvotes: c.data.score,
-                            body: c.data.body,
-                            created: new Date(c.data.created_utc * 1000).toISOString(),
-                        }));
-                } else {
-                    log.warning(`Failed to load comments for ${post.url} (Status: ${cRes.statusCode})`);
-                    post.comments = [];
+                        post.comments = commentsData
+                            .filter((c) => c.kind === 't1' && c.data && c.data.body)
+                            .map((c) => ({
+                                author: c.data.author,
+                                upvotes: c.data.score,
+                                body: c.data.body,
+                                created: new Date(c.data.created_utc * 1000).toISOString(),
+                            }));
+                        return; // Success!
+                    }
+                    log.warning(
+                        `Failed to load comments for ${post.url} (Status: ${cRes.statusCode}) on attempt ${attempt}`,
+                    );
+                } catch (err) {
+                    log.warning(`Error extracting comments for ${post.title} on attempt ${attempt}: ${err.message}`);
                 }
 
-                // Add a small delay only if not using proxy to prevent rate-limiting
-                if (!proxyUrl) {
-                    await setTimeout(250);
+                if (attempt < maxCommentRetries) {
+                    await setTimeout(500);
                 }
-            } catch (err) {
-                log.warning(`Error extracting comments for ${post.title}: ${err.message}`);
-                post.comments = [];
             }
+            post.comments = [];
         };
 
         const tasks = posts.map((post) => () => scrapePostComments(post));
