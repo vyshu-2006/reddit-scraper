@@ -1,0 +1,50 @@
+{
+    "actorSpecification": 1,
+    "fields": {},
+    "views": {
+        "overview": {
+            "title": "Reddit Posts",
+            "description": "Scraped posts from Reddit",
+            "transformation": {
+                "fields": ["title", "author", "upvotes", "commentCount", "subreddit", "created", "url", "comments"]
+            },
+            "display": {
+                "component": "table",
+                "properties": {
+                    "title": {
+                        "label": "Title",
+                        "format": "text"
+                    },
+                    "author": {
+                        "label": "Author",
+                        "format": "text"
+                    },
+                    "upvotes": {
+                        "label": "Upvotes",
+                        "format": "number"
+                    },
+                    "commentCount": {
+                        "label": "Comments",
+                        "format": "number"
+                    },
+                    "subreddit": {
+                        "label": "Subreddit",
+                        "format": "text"
+                    },
+                    "created": {
+                        "label": "Date Created",
+                        "format": "date"
+                    },
+                    "url": {
+                        "label": "Link",
+                        "format": "link"
+                    },
+                    "comments": {
+                        "label": "Comments Data",
+                        "format": "array"
+                    }
+                }
+            }
+        }
+    }
+}

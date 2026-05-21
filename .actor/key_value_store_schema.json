@@ -1,0 +1,13 @@
+{
+    "actorKeyValueStoreSchemaVersion": 1,
+    "title": "Key-Value Store Schema",
+    "description": "Schema for the default Key-Value Store of Reddit Hot Scraper",
+    "collections": {
+        "input": {
+            "title": "Input",
+            "description": "The input configuration provided to the Actor",
+            "key": "INPUT",
+            "contentTypes": ["application/json"]
+        }
+    }
+}

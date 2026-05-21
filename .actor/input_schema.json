@@ -1,0 +1,41 @@
+{
+    "title": "Reddit Scraper Input",
+    "type": "object",
+    "schemaVersion": 1,
+    "properties": {
+        "subreddit": {
+            "title": "Subreddit",
+            "type": "string",
+            "description": "Name of the subreddit to scrape (e.g., javascript)",
+            "editor": "textfield",
+            "default": "javascript"
+        },
+        "maxPosts": {
+            "title": "Max Posts",
+            "type": "integer",
+            "description": "Maximum number of posts to scrape",
+            "default": 10,
+            "minimum": 1
+        },
+        "searchKeyword": {
+            "title": "Search Keyword (Optional)",
+            "type": "string",
+            "description": "Search reddit instead of getting hot posts",
+            "editor": "textfield"
+        },
+        "scrapeComments": {
+            "title": "Scrape Top Comments",
+            "type": "boolean",
+            "description": "Extract top 10 comments for each post (slightly slower)",
+            "default": false
+        },
+        "proxyConfiguration": {
+            "title": "Proxy Configuration",
+            "type": "object",
+            "description": "Select proxies to be used by your scraper.",
+            "editor": "proxy",
+            "default": { "useApifyProxy": true }
+        }
+    },
+    "required": ["subreddit"]
+}
