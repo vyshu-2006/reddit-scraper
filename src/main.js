@@ -50,6 +50,27 @@ try {
         log.info('Using Apify proxy configuration.');
     }
 
+    // Warm up session cookies by fetching the main subreddit page first to bypass 403 Forbidden checks
+    let cookieHeader = '';
+    try {
+        const mainUrl = `https://www.reddit.com/r/${subreddit}`;
+        log.info(`Warming up session cookies from ${mainUrl}...`);
+        const warmUpRes = await gotScraping({
+            url: mainUrl,
+            proxyUrl,
+            throwHttpErrors: false,
+        });
+        if (warmUpRes.statusCode === 200) {
+            const cookies = warmUpRes.headers['set-cookie'] || [];
+            cookieHeader = cookies.map((c) => c.split(';')[0]).join('; ');
+            log.info(`Session warmed up successfully. Acquired ${cookies.length} cookies.`);
+        } else {
+            log.warning(`Session warm up returned status ${warmUpRes.statusCode}. Proceeding without cookies.`);
+        }
+    } catch (err) {
+        log.warning(`Failed to warm up session cookies: ${err.message}. Proceeding without cookies.`);
+    }
+
     let url;
     if (searchKeyword && searchKeyword.trim().length > 0) {
         log.info(`Searching for "${searchKeyword}" in Reddit r/${subreddit} (max ${maxPosts} posts)`);
@@ -63,6 +84,7 @@ try {
     const res = await gotScraping({
         url,
         proxyUrl,
+        headers: cookieHeader ? { cookie: cookieHeader } : {},
         responseType: 'json',
         throwHttpErrors: false,
     });
@@ -102,6 +124,7 @@ try {
                 const cRes = await gotScraping({
                     url: commentsUrl,
                     proxyUrl,
+                    headers: cookieHeader ? { cookie: cookieHeader } : {},
                     responseType: 'json',
                     throwHttpErrors: false,
                 });
