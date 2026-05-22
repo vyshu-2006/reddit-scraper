@@ -63,12 +63,16 @@ try {
     // Attempt request with retry and proxy rotation logic
     let res;
     let cookieHeader = '';
+    let successProxyUrl;
+    let successSessionToken;
     const maxRetries = 5;
 
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
         try {
-            // Retrieve a fresh proxy URL on each attempt (if configured)
+            // Retrieve a fresh proxy URL and a fresh session token for this attempt
             proxyUrl = proxyConfiguration ? await proxyConfiguration.newUrl() : undefined;
+            const currentSessionToken = {};
+
             if (proxyUrl && attempt > 1) {
                 log.info(`Attempt ${attempt}: Rotated to a new proxy IP.`);
             }
@@ -80,6 +84,7 @@ try {
             const warmUpRes = await gotScraping({
                 url: mainUrl,
                 proxyUrl,
+                sessionToken: currentSessionToken,
                 throwHttpErrors: false,
                 timeout: { request: 10000 },
             });
@@ -100,6 +105,7 @@ try {
             res = await gotScraping({
                 url,
                 proxyUrl,
+                sessionToken: currentSessionToken,
                 headers: cookieHeader ? { cookie: cookieHeader } : {},
                 responseType: 'json',
                 throwHttpErrors: false,
@@ -107,6 +113,8 @@ try {
             });
 
             if (res.statusCode === 200) {
+                successProxyUrl = proxyUrl;
+                successSessionToken = currentSessionToken;
                 break; // Successful request
             } else {
                 log.warning(`Reddit API responded with ${res.statusCode} on attempt ${attempt}.`);
@@ -160,12 +168,20 @@ try {
             const maxCommentRetries = 3;
             for (let attempt = 1; attempt <= maxCommentRetries; attempt++) {
                 try {
-                    const currentProxyUrl = proxyConfiguration ? await proxyConfiguration.newUrl() : undefined;
+                    // Reuse success proxy URL on first attempt to match the warmed session, rotate otherwise
+                    let currentProxyUrl;
+                    if (attempt === 1 && successProxyUrl) {
+                        currentProxyUrl = successProxyUrl;
+                    } else if (proxyConfiguration) {
+                        currentProxyUrl = await proxyConfiguration.newUrl();
+                    }
+
                     const commentsUrl = `${post.url.replace(/\/$/, '')}.json?limit=10`;
                     log.info(`Fetching comments for: ${post.title} (Attempt ${attempt}/${maxCommentRetries})`);
                     const cRes = await gotScraping({
                         url: commentsUrl,
                         proxyUrl: currentProxyUrl,
+                        sessionToken: successSessionToken,
                         headers: cookieHeader ? { cookie: cookieHeader } : {},
                         responseType: 'json',
                         throwHttpErrors: false,
